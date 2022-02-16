@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>dropshipping</name>
+	<displayName><![CDATA[Dropshipping]]></displayName>
+	<version><![CDATA[1.0.0]]></version>
+	<description><![CDATA[Módulo para gestionar pedidos a proveedores mediante sus APIs etc, y en caso de hacer dropshipping poder gestionarlo.]]></description>
+	<author><![CDATA[Sergio]]></author>
+	<tab><![CDATA[administration]]></tab>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
+</module>
