@@ -572,10 +572,10 @@ class Dropshipping extends Module
     public function apiDisfrazzes($id_lafrips_dropshipping) {
         //prueba, enviar email
         //preparamos los parámetros para la llamada, info del pedido y de los productos. Tenemos el id de la tabla dropshipping del pedido
-        //el email enviamos tienda@lafrikileria.com en lugar del del cliente
+        //el email usamos tienda@lafrikileria.com en lugar del del cliente para todos, y enviamos el id_customer en su lugar
 
         //sacamos la info del pedido
-        $sql_info_order = 'SELECT dro.date_add AS fecha, dro.id_order AS id_order, dra.firstname AS firstname, dra.lastname AS lastname, dra.phone AS phone, dra.company AS company,
+        $sql_info_order = 'SELECT dro.date_add AS fecha, dro.id_customer AS id_customer, dro.id_order AS id_order, dra.firstname AS firstname, dra.lastname AS lastname, dra.phone AS phone, dra.company AS company,
         dra.address1 AS address1, dra.postcode AS postcode, dra.city AS city, dra.country AS country
         FROM lafrips_dropshipping dro
         JOIN lafrips_dropshipping_address dra ON dra.id_dropshipping_address = dro.id_dropshipping_address
@@ -584,6 +584,7 @@ class Dropshipping extends Module
         $info_order = Db::getInstance()->executeS($sql_info_order); 
 
         $date_add = $info_order[0]['fecha'];
+        $id_customer = $info_order[0]['id_customer'];
         $id_order = $info_order[0]['id_order'];
         $firstname = $info_order[0]['firstname'];
         $lastname = $info_order[0]['lastname'];
@@ -608,7 +609,7 @@ class Dropshipping extends Module
                 "product_id" => $info_producto['product_id'],
                 "variant_id" => $info_producto['variant_id'],
                 "quantity" => $info_producto['product_quantity'],
-                "expected_price" => ""
+                "expected_price" => 1
             );
 
             $lines[] = $producto;
@@ -622,7 +623,7 @@ class Dropshipping extends Module
             "marketplace_order_id" => $id_order,
             "label_content" => "",
             "address" => array(
-                "email" => 'tienda@lafrikileria.com',
+                "email" => $id_customer, 
                 "name" => $firstname,
                 "surname" => $lastname,
                 "phone" => $phone,
@@ -703,6 +704,8 @@ class Dropshipping extends Module
             true,
             1
         );
+
+        return true;
 
     }
 
