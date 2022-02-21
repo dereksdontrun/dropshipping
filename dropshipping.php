@@ -301,10 +301,10 @@ class Dropshipping extends Module
                 }
 
                 //si hay productos sin stock de proveedores dropshipping los tenemos en $info_dropshipping
-                //necesitamos la información de la dirección de entrega
-                if (!$info_address = $this->getAddressInfo($info_dropshipping['order']['id_address_delivery'])) {
-                    //no tenemos dirección, marcamos el pedido con error = 1
-                    $error = 1;
+                //necesitamos la información de la dirección de entrega, ya sea al cliente o a nuestro almacén
+                if ((!$info_address = $this->getAddressInfo($id_order))) {
+                    //no tenemos dirección, marcamos el pedido con error = 1¿? Enviamos a almacén
+                    $envio_almacen = 1;
                     $firstname = '';
                     $lastname = '';
                     $company = '';
@@ -318,7 +318,7 @@ class Dropshipping extends Module
                     $other = '';
                     $dni = '';
                 } else {
-                    $error = 0;
+                    $envio_almacen = $info_address[0]['envio_almacen'];
                     $firstname = $info_address[0]['firstname'];
                     $lastname = $info_address[0]['lastname'];
                     $company = $info_address[0]['company'];
@@ -334,7 +334,7 @@ class Dropshipping extends Module
                 }
                 //almacenamos la dirección en lafrips_dropshipping_address y guardamos el id de la inserción
                 $sql_insert_lafrips_dropshipping_address = 'INSERT INTO lafrips_dropshipping_address
-                 (id_order, id_customer, email, id_address_delivery, firstname, lastname, company, address1, postcode, city, provincia, country, phone, other, dni, error, date_add) 
+                 (id_order, id_customer, email, id_address_delivery, firstname, lastname, company, address1, postcode, city, provincia, country, phone, other, dni, envio_almacen, date_add) 
                  VALUES 
                  ('.$id_order.',
                  '.$info_dropshipping['order']['id_customer'].',
@@ -351,7 +351,7 @@ class Dropshipping extends Module
                  "'.$phone.'", 
                  "'.$other.'", 
                  "'.$dni.'", 
-                 '.$error.',
+                 '.$envio_almacen.',
                  NOW())';
                 Db::getInstance()->executeS($sql_insert_lafrips_dropshipping_address);
 
@@ -510,24 +510,49 @@ class Dropshipping extends Module
 
     }
 
-    //función que recibe id_delivery_address y devuelve los datos necesarios para la entrega
-    public function getAddressInfo($id_address) {
-        $sql_info_address = 'SELECT adr.firstname AS firstname, adr.lastname AS lastname, adr.company AS company, cus.email AS email, 
-        CONCAT(IF(CHAR_LENGTH(adr.phone) < 7,"", adr.phone), IF(CHAR_LENGTH(adr.phone) < 7 OR CHAR_LENGTH(adr.phone_mobile) < 7,"","-"), IF(CHAR_LENGTH(adr.phone_mobile) < 7,"", adr.phone_mobile)) AS phone,
-        CONCAT(adr.address1,IF(adr.address2 = "",""," "),IF(adr.address2 = "","",adr.address2)) AS address1, 
-        adr.postcode AS postcode, adr.city AS city, sta.name AS provincia, col.name AS country,
-        adr.other AS other, adr.dni AS dni
-        FROM lafrips_address adr
-        JOIN lafrips_customer cus ON cus.id_customer = adr.id_customer
-        LEFT JOIN lafrips_state sta ON adr.id_state = sta.id_state
-        LEFT JOIN lafrips_country_lang col ON adr.id_country = col.id_country AND col.id_lang = 1
-        WHERE adr.id_address = '.$id_address;
+    //función que recibe id_delivery_address y devuelve los datos necesarios para la entrega. Tiene en cuenta que los pedidos a España península y Baleares respetarán los datos del cliente ya que a 21/02/2022 Disfrazzes los enviará a ellos directamente. Los pedidos a cualquier otro destino (Canarias, Ceuta y Melilla, extranjero) llevarán los datos del almacén para recibirlos nosotros y enviarlos desde nuestro almacén.
+    // Los pedidos con pago Contra reembolso los dirigimos a almacén también
+    public function getAddressInfo($id_order) {
+        //sacamos el método de pago, si es Contrareembolso o ClickCanarias, se enviará a almacén, sino, comprobamos id_address_delivery para saber a donde va y si se desvía a almacén. 
+        $order = new Order($id_order);
 
-        if ($info_address = Db::getInstance()->ExecuteS($sql_info_address)) {
-            return $info_address;
-        }
+        if (Validate::isLoadedObject($order)) {
+            $almacen = 0;
 
+            if ($order->module == 'codfee' || $order->module == 'clickcanarias') {
+                $almacen = 1;
+            } 
+            
+            //obtenemos los datos de la dirección de entrega
+            $sql_info_address = 'SELECT adr.firstname AS firstname, adr.lastname AS lastname, adr.company AS company, cus.email AS email, 
+            CONCAT(IF(CHAR_LENGTH(adr.phone) < 7,"", adr.phone), IF(CHAR_LENGTH(adr.phone) < 7 OR CHAR_LENGTH(adr.phone_mobile) < 7,"","-"), IF(CHAR_LENGTH(adr.phone_mobile) < 7,"", adr.phone_mobile)) AS phone,
+            CONCAT(adr.address1,IF(adr.address2 = "",""," "),IF(adr.address2 = "","",adr.address2)) AS address1, 
+            adr.postcode AS postcode, adr.city AS city, sta.name AS provincia, col.name AS country,
+            adr.other AS other, adr.dni AS dni, adr.id_country AS id_country, adr.id_state AS id_state
+            FROM lafrips_address adr
+            JOIN lafrips_customer cus ON cus.id_customer = adr.id_customer
+            LEFT JOIN lafrips_state sta ON adr.id_state = sta.id_state
+            LEFT JOIN lafrips_country_lang col ON adr.id_country = col.id_country AND col.id_lang = 1
+            WHERE adr.id_address = '.$order->id_address_delivery;
+
+            if ($info_address = Db::getInstance()->ExecuteS($sql_info_address)) {
+                //comprobamos si el pedido tiene como destino España península o Baleares  
+                //si id_country no es 6 , que engloba península y Baleares, enviamos a almacén.
+                //Además, por errores que a veces se crea una dirección con id_country 6 pero provincia de Canarias o Ceuta-Melilla, si state es 363 o 364, 368 o 369 (Ceuta y Melilla) o 339, 351, 365, 366 (Canarias), enviamos a almacén
+                if (($info_address[0]['id_country'] != 6) || in_array($info_address[0]['id_state'], array(339, 351, 363, 364, 365, 366, 368, 369))) {
+                    $almacen = 1;
+                }
+
+                $info_address[0]['envio_almacen'] = $almacen;
+
+                return $info_address;
+            }
+                
+        } 
+            
+        //devolverá false si hay error en pedido o no se obtiene dirección (clickcanarias "rompe" la dirección de envío del pedido) En la función principal se interpreta como entrega en almacén
         return false;
+        
 
     }
 
@@ -576,23 +601,36 @@ class Dropshipping extends Module
 
         //sacamos la info del pedido
         $sql_info_order = 'SELECT dro.date_add AS fecha, dro.id_customer AS id_customer, dro.id_order AS id_order, dra.firstname AS firstname, dra.lastname AS lastname, dra.phone AS phone, dra.company AS company,
-        dra.address1 AS address1, dra.postcode AS postcode, dra.city AS city, dra.country AS country
+        dra.address1 AS address1, dra.postcode AS postcode, dra.city AS city, dra.country AS country, dra.envio_almacen AS envio_almacen
         FROM lafrips_dropshipping dro
         JOIN lafrips_dropshipping_address dra ON dra.id_dropshipping_address = dro.id_dropshipping_address
         WHERE dro.id_dropshipping = '.$id_lafrips_dropshipping;
 
         $info_order = Db::getInstance()->executeS($sql_info_order); 
 
-        $date_add = $info_order[0]['fecha'];
-        $id_customer = $info_order[0]['id_customer'];
-        $id_order = $info_order[0]['id_order'];
-        $firstname = $info_order[0]['firstname'];
-        $lastname = $info_order[0]['lastname'];
-        $phone = $info_order[0]['phone'];
-        $company = $info_order[0]['company'];
-        $address1 = $info_order[0]['address1'];
-        $postcode = $info_order[0]['postcode'];
-        $city = $info_order[0]['city'];
+        if ($info_order[0]['envio_almacen']) {
+            $date_add = $info_order[0]['fecha'];
+            $id_customer = $info_order[0]['id_customer'];
+            $id_order = $info_order[0]['id_order'];
+            $firstname = 'La Frikilería';
+            $lastname = 'La Frikilería';
+            $phone = '941123004';
+            $company = 'La Frikilería';                        
+            $address1 = 'Calle Las Balsas 20 - PI Cantabria - Junto GLS';
+            $postcode = '26009';
+            $city = 'Logroño';            
+        } else {
+            $date_add = $info_order[0]['fecha'];
+            $id_customer = $info_order[0]['id_customer'];
+            $id_order = $info_order[0]['id_order'];
+            $firstname = $info_order[0]['firstname'];
+            $lastname = $info_order[0]['lastname'];
+            $phone = $info_order[0]['phone'];
+            $company = $info_order[0]['company'];
+            $address1 = $info_order[0]['address1'];
+            $postcode = $info_order[0]['postcode'];
+            $city = $info_order[0]['city'];
+        }        
 
         //sacamos la info de los productos del pedido
         $sql_info_productos = 'SELECT id_order_detail, product_id, variant_id, product_quantity
@@ -634,7 +672,7 @@ class Dropshipping extends Module
                 "city" => $city,
                 "country_ISO2" => $country_ISO2
             ),
-            "lines" => array($lines[0])
+            "lines" => array($lines)
         );
 
         $array_json_parameters = json_encode($parameters);
@@ -682,7 +720,7 @@ class Dropshipping extends Module
         }
         
         
-        $asunto = 'Pedido Disfrazzes para dropshipping '.date("Y-m-d H:i:s");
+        $asunto = 'Pedido '.$id_order.' - Disfrazzes para dropshipping '.date("Y-m-d H:i:s");
         $info = [];                
         $info['{firstname}'] = 'Sergio';
         $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
@@ -694,7 +732,7 @@ class Dropshipping extends Module
             'aviso_error_expedicion_cerda', //plantilla
             Mail::l($asunto, 1),
             $info,
-            'sergio@lafrikileria.com',
+            array('sergio@lafrikileria.com','alberto@lafrikileria.com'),
             'Sergio',
             null,
             null,
