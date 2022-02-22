@@ -709,7 +709,21 @@ class Dropshipping extends Module
 
         $mensaje = '<br>Petición:<br>'.$array_json_parameters.'<br><br>';
 
-        if ($response = curl_exec($curl)) {
+        try {
+            //ejecutamos cURL
+            $response = curl_exec($curl);
+
+            //si ha ocurrido algún error, lo capturamos para meter en log el mensaje de error
+            if(curl_errno($ch)){
+                throw new Exception(curl_error($ch));
+            }
+        }
+        catch (Exception $e) {            
+            $mensaje .= '<br> - Excepción capturada llamando a API: '.$e;
+            
+        }
+
+        if ($response) {
             curl_close($curl);
           
             $mensaje .= '<br>Respuesta:<br>'.$response.'<br><br>';
@@ -719,31 +733,12 @@ class Dropshipping extends Module
         } else {
             //no hay respuesta pero cerramos igualmente
             curl_close($curl);
-        }
+        }   
         
-        
-        $asunto = 'Pedido '.$id_order.' - Disfrazzes para dropshipping '.date("Y-m-d H:i:s");
-        $info = [];                
-        $info['{firstname}'] = 'Sergio';
-        $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
-        $info['{errores}'] = $mensaje;
-        // print_r($info);
-        // $info['{order_name}'] = $order->getUniqReference();
-        @Mail::Send(
-            1,
-            'aviso_error_expedicion_cerda', //plantilla
-            Mail::l($asunto, 1),
-            $info,
-            array('sergio@lafrikileria.com'),
-            'Sergio',
-            null,
-            null,
-            null,
-            null,
-            _PS_MAIL_DIR_,
-            true,
-            1
-        );
+
+        $cuentas = array('sergio@lafrikileria.com');
+
+        $this->enviaEmail($cuentas, $mensaje, 'Disfrazzes', $id_order);
 
         return true;
 
@@ -754,29 +749,10 @@ class Dropshipping extends Module
         //prueba, enviar email
         //preparamos los parámetros para la llamada, info del pedido y de los productos. Tenemos el id de la tabla dropshipping del pedido
         $mensaje = '<pre>'.json_encode($info_productos).'</pre>';
+        
+        $cuentas = array('sergio@lafrikileria.com');
 
-        $asunto = 'Pedido DMI para dropshipping '.date("Y-m-d H:i:s");
-        $info = [];                
-        $info['{firstname}'] = 'Sergio';
-        $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
-        $info['{errores}'] = $mensaje;
-        // print_r($info);
-        // $info['{order_name}'] = $order->getUniqReference();
-        @Mail::Send(
-            1,
-            'aviso_error_expedicion_cerda', //plantilla
-            Mail::l($asunto, 1),
-            $info,
-            'sergio@lafrikileria.com',
-            'Sergio',
-            null,
-            null,
-            null,
-            null,
-            _PS_MAIL_DIR_,
-            true,
-            1
-        );
+        $this->enviaEmail($cuentas, $mensaje, 'DMI');
        
 
     }
@@ -787,7 +763,17 @@ class Dropshipping extends Module
         //preparamos los parámetros para la llamada, info del pedido y de los productos. Tenemos el id de la tabla dropshipping del pedido
         $mensaje = '<pre>'.json_encode($info_productos).'</pre>';
 
-        $asunto = 'Pedido Globomatik para dropshipping '.date("Y-m-d H:i:s");
+        
+        $cuentas = array('sergio@lafrikileria.com');
+
+        $this->enviaEmail($cuentas, $mensaje, 'Globomatik');
+
+    }
+
+    //función que envía un email al correo/s especificado (se recibe un array $cuentas) y con el mensaje especificado y proveedor que corresponde
+    public function enviaEmail($cuentas, $mensaje, $proveedor, $id_order = '') {
+
+        $asunto = 'Pedido '.$id_order.' de '.$proveedor.' para dropshipping '.date("Y-m-d H:i:s");
         $info = [];                
         $info['{firstname}'] = 'Sergio';
         $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
@@ -799,7 +785,7 @@ class Dropshipping extends Module
             'aviso_error_expedicion_cerda', //plantilla
             Mail::l($asunto, 1),
             $info,
-            'sergio@lafrikileria.com',
+            $cuentas,
             'Sergio',
             null,
             null,
