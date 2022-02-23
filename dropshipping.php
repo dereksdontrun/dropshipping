@@ -292,7 +292,8 @@ class Dropshipping extends Module
 
                 //chequeamos si ya ha pasado por aquí el pedido
                 if ($this->checkPedidoProcesado($id_order)) {
-                    //si devuelve true,comprobaremos si los productos dropshipping coinciden o se han modificado, en cuyo caso volver a solictar pedido?
+                    //si devuelve true,comprobaremos si los productos dropshipping coinciden o se han modificado, en cuyo caso volver a solicitar pedido?
+                    //además, si tiene varios proveedores dropshipping puede dar lugar a error
                     //para más adelante
                     return;
                 }
@@ -635,7 +636,7 @@ class Dropshipping extends Module
         }        
 
         //sacamos la info de los productos del pedido
-        $sql_info_productos = 'SELECT id_order_detail, product_id, variant_id, product_quantity
+        $sql_info_productos = 'SELECT id_order_detail, id_product, product_id, variant_id, product_quantity
         FROM lafrips_dropshipping_disfrazzes 
         WHERE id_dropshipping = '.$id_lafrips_dropshipping;
 
@@ -644,12 +645,14 @@ class Dropshipping extends Module
         $lines = array();
 
         foreach ($info_productos AS $info_producto) {
+            $price = Product::getPriceStatic($info_producto['id_product'], false, 0, 2); //precio, sin tax, sin atributo (impacto), 2 decimales
+
             $producto = array(
                 "marketplace_row_id" => $info_producto['id_order_detail'],
                 "product_id" => $info_producto['product_id'],
                 "variant_id" => $info_producto['variant_id'],
                 "quantity" => $info_producto['product_quantity'],
-                "expected_price" => 1
+                "expected_price" => $price
             );
 
             $lines[] = $producto;
@@ -713,7 +716,7 @@ class Dropshipping extends Module
             //ejecutamos cURL
             $response = curl_exec($curl);
 
-            //si ha ocurrido algún error, lo capturamos para meter en log el mensaje de error
+            //si ha ocurrido algún error, lo capturamos
             if(curl_errno($ch)){
                 throw new Exception(curl_error($ch));
             }
@@ -727,12 +730,68 @@ class Dropshipping extends Module
             curl_close($curl);
           
             $mensaje .= '<br>Respuesta:<br>'.$response.'<br><br>';
-            //pasamos el JSON de respuesta a un objeto PHP
+            //pasamos el JSON de respuesta a un objeto PHP. Introduciremos el resultado en cada línea de producto de lafrips_dropshipping_disfrazzes            
             $response_decode = json_decode($response); 
+
+            foreach ($response_decode->data->lines_result AS $line_result) {                 
+                $array_json_parameters = pSQL($array_json_parameters);
+                $response = pSQL($response);
+
+                $response_decode_result = (int)$response_decode->result;
+                $response_decode_data_delivery_date = $response_decode->data->delivery_date;
+                $response_decode_msg = $response_decode->msg;
+                $response_decode_data_disfrazzes_id = (int)$response_decode->data->disfrazzes_id;
+                $response_decode_data_disfrazzes_reference = $response_decode->data->disfrazzes_reference;
+                $line_result_result = (int)$line_result->result;
+                $line_result_msg = $line_result->msg;
+                $line_result_quantity_accepted = (int)$line_result->quantity_accepted;
+                $line_result_row_id = (int)$line_result->row_id;
+                $line_result_marketplace_row_id = (int)$line_result->marketplace_row_id;
+                
+                //para insertar el json string hay que hacerlo así
+                $sql_update_response = "UPDATE lafrips_dropshipping_disfrazzes
+                SET
+                api_call_parameters = '$array_json_parameters', 
+                api_call_response = '$response', 
+                response_result = $response_decode_result,
+                response_delivery_date = '$response_decode_data_delivery_date',
+                response_msg = '$response_decode_msg',
+                disfrazzes_id = $response_decode_data_disfrazzes_id,
+                disfrazzes_reference = '$response_decode_data_disfrazzes_reference',
+                estado = 'solicitado_ok',
+                variant_result = $line_result_result,
+                variant_msg = '$line_result_msg',
+                variant_quantity_accepted = $line_result_quantity_accepted,
+                variant_row_id = $line_result_row_id,          
+                date_upd = NOW()
+                WHERE id_order_detail = $line_result_marketplace_row_id
+                AND id_dropshipping = $id_lafrips_dropshipping";
+
+                Db::getInstance()->executeS($sql_update_response); 
+
+            }
+
+
+
+            
+
 
         } else {
             //no hay respuesta pero cerramos igualmente
             curl_close($curl);
+
+            $array_json_parameters = pSQL($array_json_parameters);
+           
+            $sql_update_no_response = "UPDATE lafrips_dropshipping_disfrazzes
+            SET
+            api_call_parameters = '$array_json_parameters',  
+            api_call_response = 'no response',     
+            estado = 'solicitado_no_ok',     
+            error = 1,
+            date_upd = NOW()
+            WHERE id_dropshipping = $id_lafrips_dropshipping";
+
+            Db::getInstance()->executeS($sql_update_no_response); 
         }   
         
 
