@@ -292,7 +292,8 @@ class Dropshipping extends Module
 
                 //chequeamos si ya ha pasado por aquí el pedido
                 if ($this->checkPedidoProcesado($id_order)) {
-                    //si devuelve true,comprobaremos si los productos dropshipping coinciden o se han modificado, en cuyo caso volver a solictar pedido?
+                    //si devuelve true,comprobaremos si los productos dropshipping coinciden o se han modificado, en cuyo caso volver a solicitar pedido?
+                    //además, si tiene varios proveedores dropshipping puede dar lugar a error
                     //para más adelante
                     return;
                 }
@@ -635,7 +636,7 @@ class Dropshipping extends Module
         }        
 
         //sacamos la info de los productos del pedido
-        $sql_info_productos = 'SELECT id_order_detail, product_id, variant_id, product_quantity
+        $sql_info_productos = 'SELECT id_order_detail, id_product, product_id, variant_id, product_quantity
         FROM lafrips_dropshipping_disfrazzes 
         WHERE id_dropshipping = '.$id_lafrips_dropshipping;
 
@@ -644,12 +645,14 @@ class Dropshipping extends Module
         $lines = array();
 
         foreach ($info_productos AS $info_producto) {
+            $price = Product::getPriceStatic($info_producto['id_product'], false, 0, 2); //precio, sin tax, sin atributo (impacto), 2 decimales
+
             $producto = array(
                 "marketplace_row_id" => $info_producto['id_order_detail'],
                 "product_id" => $info_producto['product_id'],
                 "variant_id" => $info_producto['variant_id'],
                 "quantity" => $info_producto['product_quantity'],
-                "expected_price" => 1
+                "expected_price" => $price
             );
 
             $lines[] = $producto;
@@ -709,41 +712,92 @@ class Dropshipping extends Module
 
         $mensaje = '<br>Petición:<br>'.$array_json_parameters.'<br><br>';
 
-        if ($response = curl_exec($curl)) {
+        try {
+            //ejecutamos cURL
+            $response = curl_exec($curl);
+
+            //si ha ocurrido algún error, lo capturamos
+            if(curl_errno($ch)){
+                throw new Exception(curl_error($ch));
+            }
+        }
+        catch (Exception $e) {            
+            $mensaje .= '<br> - Excepción capturada llamando a API: '.$e;
+            
+        }
+
+        if ($response) {
             curl_close($curl);
           
             $mensaje .= '<br>Respuesta:<br>'.$response.'<br><br>';
-            //pasamos el JSON de respuesta a un objeto PHP
+            //pasamos el JSON de respuesta a un objeto PHP. Introduciremos el resultado en cada línea de producto de lafrips_dropshipping_disfrazzes            
             $response_decode = json_decode($response); 
+
+            foreach ($response_decode->data->lines_result AS $line_result) {                 
+                $array_json_parameters = pSQL($array_json_parameters);
+                $response = pSQL($response);
+
+                $response_decode_result = (int)$response_decode->result;
+                $response_decode_data_delivery_date = $response_decode->data->delivery_date;
+                $response_decode_msg = $response_decode->msg;
+                $response_decode_data_disfrazzes_id = (int)$response_decode->data->disfrazzes_id;
+                $response_decode_data_disfrazzes_reference = $response_decode->data->disfrazzes_reference;
+                $line_result_result = (int)$line_result->result;
+                $line_result_msg = $line_result->msg;
+                $line_result_quantity_accepted = (int)$line_result->quantity_accepted;
+                $line_result_row_id = (int)$line_result->row_id;
+                $line_result_marketplace_row_id = (int)$line_result->marketplace_row_id;
+                
+                //para insertar el json string hay que hacerlo así
+                $sql_update_response = "UPDATE lafrips_dropshipping_disfrazzes
+                SET
+                api_call_parameters = '$array_json_parameters', 
+                api_call_response = '$response', 
+                response_result = $response_decode_result,
+                response_delivery_date = '$response_decode_data_delivery_date',
+                response_msg = '$response_decode_msg',
+                disfrazzes_id = $response_decode_data_disfrazzes_id,
+                disfrazzes_reference = '$response_decode_data_disfrazzes_reference',
+                estado = 'solicitado_ok',
+                variant_result = $line_result_result,
+                variant_msg = '$line_result_msg',
+                variant_quantity_accepted = $line_result_quantity_accepted,
+                variant_row_id = $line_result_row_id,          
+                date_upd = NOW()
+                WHERE id_order_detail = $line_result_marketplace_row_id
+                AND id_dropshipping = $id_lafrips_dropshipping";
+
+                Db::getInstance()->executeS($sql_update_response); 
+
+            }
+
+
+
+            
+
 
         } else {
             //no hay respuesta pero cerramos igualmente
             curl_close($curl);
-        }
+
+            $array_json_parameters = pSQL($array_json_parameters);
+           
+            $sql_update_no_response = "UPDATE lafrips_dropshipping_disfrazzes
+            SET
+            api_call_parameters = '$array_json_parameters',  
+            api_call_response = 'no response',     
+            estado = 'solicitado_no_ok',     
+            error = 1,
+            date_upd = NOW()
+            WHERE id_dropshipping = $id_lafrips_dropshipping";
+
+            Db::getInstance()->executeS($sql_update_no_response); 
+        }   
         
-        
-        $asunto = 'Pedido '.$id_order.' - Disfrazzes para dropshipping '.date("Y-m-d H:i:s");
-        $info = [];                
-        $info['{firstname}'] = 'Sergio';
-        $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
-        $info['{errores}'] = $mensaje;
-        // print_r($info);
-        // $info['{order_name}'] = $order->getUniqReference();
-        @Mail::Send(
-            1,
-            'aviso_error_expedicion_cerda', //plantilla
-            Mail::l($asunto, 1),
-            $info,
-            array('sergio@lafrikileria.com'),
-            'Sergio',
-            null,
-            null,
-            null,
-            null,
-            _PS_MAIL_DIR_,
-            true,
-            1
-        );
+
+        $cuentas = array('sergio@lafrikileria.com');
+
+        $this->enviaEmail($cuentas, $mensaje, 'Disfrazzes', $id_order);
 
         return true;
 
@@ -754,29 +808,10 @@ class Dropshipping extends Module
         //prueba, enviar email
         //preparamos los parámetros para la llamada, info del pedido y de los productos. Tenemos el id de la tabla dropshipping del pedido
         $mensaje = '<pre>'.json_encode($info_productos).'</pre>';
+        
+        $cuentas = array('sergio@lafrikileria.com');
 
-        $asunto = 'Pedido DMI para dropshipping '.date("Y-m-d H:i:s");
-        $info = [];                
-        $info['{firstname}'] = 'Sergio';
-        $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
-        $info['{errores}'] = $mensaje;
-        // print_r($info);
-        // $info['{order_name}'] = $order->getUniqReference();
-        @Mail::Send(
-            1,
-            'aviso_error_expedicion_cerda', //plantilla
-            Mail::l($asunto, 1),
-            $info,
-            'sergio@lafrikileria.com',
-            'Sergio',
-            null,
-            null,
-            null,
-            null,
-            _PS_MAIL_DIR_,
-            true,
-            1
-        );
+        $this->enviaEmail($cuentas, $mensaje, 'DMI');
        
 
     }
@@ -787,7 +822,17 @@ class Dropshipping extends Module
         //preparamos los parámetros para la llamada, info del pedido y de los productos. Tenemos el id de la tabla dropshipping del pedido
         $mensaje = '<pre>'.json_encode($info_productos).'</pre>';
 
-        $asunto = 'Pedido Globomatik para dropshipping '.date("Y-m-d H:i:s");
+        
+        $cuentas = array('sergio@lafrikileria.com');
+
+        $this->enviaEmail($cuentas, $mensaje, 'Globomatik');
+
+    }
+
+    //función que envía un email al correo/s especificado (se recibe un array $cuentas) y con el mensaje especificado y proveedor que corresponde
+    public function enviaEmail($cuentas, $mensaje, $proveedor, $id_order = '') {
+
+        $asunto = 'Pedido '.$id_order.' de '.$proveedor.' para dropshipping '.date("Y-m-d H:i:s");
         $info = [];                
         $info['{firstname}'] = 'Sergio';
         $info['{archivo_expediciones}'] = 'Hora ejecución '.date("Y-m-d H:i:s");
@@ -799,7 +844,7 @@ class Dropshipping extends Module
             'aviso_error_expedicion_cerda', //plantilla
             Mail::l($asunto, 1),
             $info,
-            'sergio@lafrikileria.com',
+            $cuentas,
             'Sergio',
             null,
             null,

@@ -73,7 +73,9 @@ class Dropshipping extends Module
         return parent::install() &&
             $this->registerHook('header') &&
             $this->registerHook('backOfficeHeader') &&
-            $this->registerHook('actionOrderStatusPostUpdate');
+            $this->registerHook('actionOrderStatusPostUpdate') &&
+            $this->registerHook('displayAdminOrder') && 
+            $this->registerHook('displayBackOfficeHeader');
     }
 
     public function uninstall()
@@ -261,8 +263,15 @@ class Dropshipping extends Module
     {
         if (Tools::getValue('module_name') == $this->name) {
             $this->context->controller->addJS($this->_path.'views/js/back.js');
-            $this->context->controller->addCSS($this->_path.'views/css/back.css');
+            $this->context->controller->addCSS($this->_path.'views/css/back.css');            
         }
+    }
+
+    //necesario para añadir css al back office de order. Parece que al usar el hook displayAdminOrder, meter el css en hookBackOfficeHeader no sirve y hay que añadir el hook hookDisplayBackOfficeHeader para esto ¿?
+    public function hookDisplayBackOfficeHeader()
+    {
+        $this->context->controller->addJS($this->_path.'views/js/adminorder.js');
+        $this->context->controller->addCSS($this->_path.'views/css/adminorder.css');
     }
 
     /**
@@ -272,6 +281,7 @@ class Dropshipping extends Module
     // {
     //     $this->context->controller->addJS($this->_path.'/views/js/front.js');
     //     $this->context->controller->addCSS($this->_path.'/views/css/front.css');
+    //     $this->context->controller->addCSS($this->_path.'/views/css/adminorder.css');
     // }
 
     //este hook se activa al cambiar de estado un pedido, justo después
@@ -856,4 +866,148 @@ class Dropshipping extends Module
         );
 
     }
+   
+    // Mostramos un nuevo bloque dentro de la ficha de pedido
+    /**
+     * @param array $params
+     * @return bool|string
+     * @throws Exception
+     * @throws SmartyException
+     */
+    public function hookDisplayAdminOrder($params)
+    {
+        //asignamos variablesmarty con la url para las imágenes, que usaremos para mostrar un logo en backoffice
+        $this->context->smarty->assign('dropshipping_img_path', $this->_path.'views/img/');
+
+        //obtenemos id_order en que nos encontramos
+        $id_order = (int) $params['id_order'];
+
+        //comprobamos si este pedido lo tenemos en la tabla dropshipping
+        $es_dropshipping = $this->checkPedidoProcesado($id_order);        
+
+        if (!$es_dropshipping) {
+            // El pedido no es dropshipping, asignamos la plantilla del hook sin dropshipping / quizás no mostrar nada
+            return $this->context->smarty->fetch($this->local_path.'views/templates/hook/dropshipping-admin-order-no-dropshipping.tpl');
+        }
+        //el pedido está en tabla dropshipping, obtenemos sus datos
+        $info = $this->getDropshippingDetails($id_order);
+        
+        //pedido dropshipping, asignamos los datos a la plantilla 
+        $this->context->smarty->assign(array(
+            'info' => $info,
+        ));
+
+        return $this->context->smarty->fetch($this->local_path.'views/templates/hook/dropshipping-admin-order-left.tpl');
+
+
+        //dejo estopor si añado opciones al hook
+        // $dhlOrder = DhlOrder::getByIdOrder((int) $idOrder);
+        // if (Tools::isSubmit('submitAssociateDhlOrder') && !Validate::isLoadedObject($dhlOrder)) {
+        //     $idDhlService = Tools::getValue('dhl_service_to_associate');
+        //     $dhlOrder = new DhlOrder();
+        //     $dhlOrder->id_order = (int) $idOrder;
+        //     $dhlOrder->id_dhl_service = (int) $idDhlService;
+        //     $dhlOrder->save();
+        // }
+        // if (!Validate::isLoadedObject($dhlOrder)) {
+        //     // Order not affected to DHL yet
+        //     $order = new Order((int) $idOrder);
+        //     $senderAddr = new DhlAddress((int) Configuration::get('DHL_DEFAULT_SENDER_ADDRESS'));
+        //     $isoSender = $senderAddr->iso_country;
+        //     $receiverAddr = new Address((int) $order->id_address_delivery);
+        //     $isoReceiver = Country::getIsoById((int) $receiverAddr->id_country);
+        //     $destinationType = DhlTools::getDestinationType($isoSender, $isoReceiver, $receiverAddr->postcode);
+        //     $services = DhlService::getServicesByZone($this->context->language->id, true);
+        //     $servicesList = $services[$destinationType];
+        //     $this->context->smarty->assign('services_list', $servicesList);
+
+        //     return $this->context->smarty->fetch($this->local_path.'views/templates/hook/dropshipping-admin-order-no-dropshipping.tpl');
+        // }
+        
+    }
+
+    //función que devuelve todos los detalles del pedido dropshipping al hook en ficha de pedido o false si no existe el pedido para dropshipping
+    public function getDropshippingDetails($id_order) {
+        //hay que tener en cuenta que en un pedido podría haber varios productos dropshipping y además de varios proveedores dropshipping. Obtenemos primero los datos indicando el proveedor y en función de ello solicitamos la info correspondiente a la tabla de cada proveedor.
+        $info = array();
+        //sacamos la info del pedido por proveedor dropshipping
+        $sql_info_pedido = 'SELECT id_supplier, supplier_name, id_customer, total_proveedores_dropshipping, productos_no_drop, total_productos, id_dropshipping, 
+        id_dropshipping_address
+        FROM lafrips_dropshipping 
+        WHERE id_order = '.$id_order;
+
+        $info_pedido = Db::getInstance()->executeS($sql_info_pedido); 
+
+        foreach ($info_pedido AS $pedido) {    
+            $info_pedido = array();
+
+            $info_pedido['supplier_name'] = $pedido['supplier_name'];
+            $info_pedido['total_proveedores_dropshipping'] = $pedido['total_proveedores_dropshipping'];
+            $info_pedido['productos_no_drop'] = $pedido['productos_no_drop'];
+            $info_pedido['total_productos'] = $pedido['total_productos']; 
+
+            $info['proveedores'][$pedido['id_supplier']] = $info_pedido;
+
+            //sacamos los productos por proveedor. De momento solo hemos almacenado para Disfrazzes id 161
+            if ($pedido['id_supplier'] == (int)Supplier::getIdByName('Disfrazzes')) {
+                $sql_info_productos = 'SELECT product_name, product_reference, product_supplier_reference,
+                product_quantity, response_msg, disfrazzes_id, disfrazzes_reference, variant_result, variant_msg, variant_quantity_accepted, date_expedicion, tracking, url_tracking
+                FROM lafrips_dropshipping_disfrazzes
+                WHERE id_dropshipping = '.$pedido['id_dropshipping'];
+
+                $info_productos = Db::getInstance()->executeS($sql_info_productos); 
+
+                foreach ($info_productos AS $info_producto) {  
+                    $producto = array();
+
+                    $producto['product_name'] = $info_producto['product_name'];
+                    $producto['product_reference'] = $info_producto['product_reference'];
+                    $producto['product_supplier_reference'] = $info_producto['product_supplier_reference'];
+                    $producto['product_quantity'] = $info_producto['product_quantity'];                    
+                    $producto['variant_result'] = $info_producto['variant_result'];
+                    $producto['variant_msg'] = $info_producto['variant_msg'];
+                    $producto['variant_quantity_accepted'] = $info_producto['variant_quantity_accepted'];
+
+                    $info['proveedores'][$pedido['id_supplier']]['productos'][] = $producto;
+
+
+                    $info_dropshipping = array();
+
+                    $info_dropshipping['response_msg'] = $info_producto['response_msg'];
+                    $info_dropshipping['disfrazzes_id'] = $info_producto['disfrazzes_id'];
+                    $info_dropshipping['disfrazzes_reference'] = $info_producto['disfrazzes_reference'];
+                    $info_dropshipping['date_expedicion'] = $info_producto['date_expedicion'];
+                    $info_dropshipping['tracking'] = $info_producto['tracking'];
+                    $info_dropshipping['url_tracking'] = $info_producto['url_tracking'];
+
+                    $info['proveedores'][$pedido['id_supplier']]['dropshipping'] = $info_dropshipping;
+                    
+                }      
+
+            }
+            
+        }
+        
+        //sacamos la dirección de entrega
+        $sql_info_direccion = 'SELECT firstname, lastname, address1, postcode, city, provincia, envio_almacen
+        FROM lafrips_dropshipping_address
+        WHERE id_order = '.$id_order;
+
+        $info_direccion = Db::getInstance()->executeS($sql_info_direccion); 
+
+        $info['direccion']['envio_almacen'] = $info_direccion[0]['envio_almacen'];
+        $info['direccion']['firstname'] = $info_direccion[0]['firstname'];
+        $info['direccion']['lastname'] = $info_direccion[0]['lastname'];
+        $info['direccion']['address1'] = $info_direccion[0]['address1'];
+        $info['direccion']['postcode'] = $info_direccion[0]['postcode'];
+        $info['direccion']['city'] = $info_direccion[0]['city'];
+        $info['direccion']['provincia'] = $info_direccion[0]['provincia'];
+        
+        if ($info) {
+            return $info;
+        }        
+
+        return false;
+    }
+
 }
