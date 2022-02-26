@@ -938,20 +938,24 @@ class Dropshipping extends Module
 
         $info_pedido = Db::getInstance()->executeS($sql_info_pedido); 
 
+        $info['detalles']['total_proveedores_dropshipping'] = $info_pedido[0]['total_proveedores_dropshipping'];
+        $info['detalles']['productos_no_drop'] = $info_pedido[0]['productos_no_drop'];
+        $info['detalles']['total_productos'] = $info_pedido[0]['total_productos'];
+
         foreach ($info_pedido AS $pedido) {    
             $info_pedido = array();
 
             $info_pedido['supplier_name'] = $pedido['supplier_name'];
-            $info_pedido['total_proveedores_dropshipping'] = $pedido['total_proveedores_dropshipping'];
-            $info_pedido['productos_no_drop'] = $pedido['productos_no_drop'];
-            $info_pedido['total_productos'] = $pedido['total_productos']; 
+            // $info_pedido['total_proveedores_dropshipping'] = $pedido['total_proveedores_dropshipping'];
+            // $info_pedido['productos_no_drop'] = $pedido['productos_no_drop'];
+            // $info_pedido['total_productos'] = $pedido['total_productos']; 
 
             $info['proveedores'][$pedido['id_supplier']] = $info_pedido;
 
             //sacamos los productos por proveedor. De momento solo hemos almacenado para Disfrazzes id 161
             if ($pedido['id_supplier'] == (int)Supplier::getIdByName('Disfrazzes')) {
                 $sql_info_productos = 'SELECT product_name, product_reference, product_supplier_reference,
-                product_quantity, response_msg, disfrazzes_id, disfrazzes_reference, variant_result, variant_msg, variant_quantity_accepted, date_expedicion, tracking, url_tracking
+                product_quantity, response_result, response_delivery_date, response_msg, disfrazzes_id, disfrazzes_reference, variant_result, variant_msg, variant_quantity_accepted, date_expedicion, tracking, url_tracking
                 FROM lafrips_dropshipping_disfrazzes
                 WHERE id_dropshipping = '.$pedido['id_dropshipping'];
 
@@ -973,6 +977,8 @@ class Dropshipping extends Module
 
                     $info_dropshipping = array();
 
+                    $info_dropshipping['response_result'] = $info_producto['response_result'];
+                    $info_dropshipping['response_delivery_date'] = $info_producto['response_delivery_date'];
                     $info_dropshipping['response_msg'] = $info_producto['response_msg'];
                     $info_dropshipping['disfrazzes_id'] = $info_producto['disfrazzes_id'];
                     $info_dropshipping['disfrazzes_reference'] = $info_producto['disfrazzes_reference'];
