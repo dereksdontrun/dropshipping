@@ -890,10 +890,11 @@ class Dropshipping extends Module
             return $this->context->smarty->fetch($this->local_path.'views/templates/hook/dropshipping-admin-order-no-dropshipping.tpl');
         }
         //el pedido está en tabla dropshipping, obtenemos sus datos
-        $info = $this->getDropshippingDetails($id_order);
-        
+        $info = $this->getDropshippingDetails($id_order);               
+       
         //pedido dropshipping, asignamos los datos a la plantilla 
         $this->context->smarty->assign(array(
+            'plantillas' => $this->local_path.'views/templates/hook', //metemos la localización de las plantillas en una variable. Sin / final porque lo necesito como separador en dropshipping-admin-order-left.tpl
             'info' => $info,
         ));
 
@@ -945,6 +946,7 @@ class Dropshipping extends Module
         foreach ($info_pedido AS $pedido) {    
             $info_pedido = array();
 
+            $info_pedido['id_supplier'] = $pedido['id_supplier'];
             $info_pedido['supplier_name'] = $pedido['supplier_name'];
             // $info_pedido['total_proveedores_dropshipping'] = $pedido['total_proveedores_dropshipping'];
             // $info_pedido['productos_no_drop'] = $pedido['productos_no_drop'];
@@ -954,7 +956,7 @@ class Dropshipping extends Module
 
             //sacamos los productos por proveedor. De momento solo hemos almacenado para Disfrazzes id 161
             if ($pedido['id_supplier'] == (int)Supplier::getIdByName('Disfrazzes')) {
-                $sql_info_productos = 'SELECT product_name, product_reference, product_supplier_reference,
+                $sql_info_productos = 'SELECT id_product, product_name, product_reference, product_supplier_reference,
                 product_quantity, response_result, response_delivery_date, response_msg, disfrazzes_id, disfrazzes_reference, variant_result, variant_msg, variant_quantity_accepted, date_expedicion, tracking, url_tracking
                 FROM lafrips_dropshipping_disfrazzes
                 WHERE id_dropshipping = '.$pedido['id_dropshipping'];
@@ -964,6 +966,14 @@ class Dropshipping extends Module
                 foreach ($info_productos AS $info_producto) {  
                     $producto = array();
 
+                    //sacamos imagen de producto
+                    $product = new Product((int)$info_producto['id_product'], false, 1, 1);
+                    $image = Image::getCover((int)$info_producto['id_product']);			
+                    $image_link = new Link;//because getImageLInk is not static function
+                    $image_path = $image_link->getImageLink($product->link_rewrite, $image['id_image'], 'home_default');
+
+                    $producto['id_product'] = $info_producto['id_product'];                    
+                    $producto['image_path'] = $image_path;
                     $producto['product_name'] = $info_producto['product_name'];
                     $producto['product_reference'] = $info_producto['product_reference'];
                     $producto['product_supplier_reference'] = $info_producto['product_supplier_reference'];

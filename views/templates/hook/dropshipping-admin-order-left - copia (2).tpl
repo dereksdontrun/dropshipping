@@ -30,7 +30,7 @@
         <i class="icon-shopping-cart"></i>
         Dropshipping <small>Atención - Estos datos no son reales, han sido obtenidos con una versión test de la api de conexión</small>
       </div>
-      <div class="col-lg-3">
+      <div class="col-lg-2">
         <img class="dropshipping-logo" src="{$dropshipping_img_path|escape:'htmlall':'UTF-8'}dropshipping.png"/>        
 
         <div class="alert alert-light">
@@ -47,12 +47,10 @@
             </p>
           </div>
         {else}
-          <div class="alert alert-success">            
-              Envío directo a cliente<br>
-              <small>{$info.direccion.firstname} {$info.direccion.lastname}</small><br>
-              <small>{$info.direccion.address1}</small><br>
-              <small>{$info.direccion.postcode} - {$info.direccion.city}</small><br>
-              <small>{$info.direccion.provincia}</small><br>
+          <div class="alert alert-success">
+            <p>
+              Envío directo a cliente - {$info.direccion.city}
+            </p>
           </div>
         {/if}
           <div class="alert alert-info">
@@ -63,24 +61,52 @@
             </p>
           </div>
       </div>
-      <div class="col-lg-9">
+      <div class="col-lg-10">
         <div id="contenido_dropshipping">
-          {foreach from=$info.proveedores key=id_supplier item=proveedor}    
-            {* construimos la url con el id de proveedor encadenando a $plantillas, y enviamos los datos de proveedor. Primero comprobamos que la plantilla existe (todo esto debería venir desde php)  *}
-            {if file_exists("$plantillas/supplier_$id_supplier/supplier_$id_supplier.tpl")}
-              {include file="$plantillas/supplier_$id_supplier/supplier_$id_supplier.tpl" proveedor=$proveedor } 
+          {foreach from=$info.proveedores item=proveedor}
+          <div class="panel">                        
+            <h2>{$proveedor.supplier_name}</h2> 
+            {if !isset($proveedor.dropshipping)} {* Si no existe array dropshipping dentro del array infoparaese proveedor, es que a pesarde ser dropshipping no lo tenemos funcionando*}
+              <div class="alert alert-warning">
+                <p>
+                  Proveedor Dropshipping sin gestión
+                </p>
+              </div>
+            {elseif $proveedor.dropshipping.response_result != 1}
+              <div class="alert alert-danger clearfix">
+                <div class="col-lg-2">                
+                  Respuesta API: {$proveedor.dropshipping.response_result}  
+                </div>  
+                <div class="col-lg-2">                
+                  Mensaje API: {$proveedor.dropshipping.response_msg}    
+                </div>                       
+              </div>
             {else}
-              <div class="alert alert-danger">               
-                  Error - Plantilla de proveedor {$proveedor.supplier_name} no encontrada                
+              <div class="alert alert-success clearfix">
+                <div class="col-lg-2">                
+                  Respuesta API: {$proveedor.dropshipping.response_result}  
+                </div>  
+                <div class="col-lg-2">                
+                  Mensaje API: {$proveedor.dropshipping.response_msg}  
+                </div>
+                <div class="col-lg-3">                
+                  Id / Referencia Disfrazzes: {$proveedor.dropshipping.disfrazzes_id} / {$proveedor.dropshipping.disfrazzes_reference}
+                </div>           
               </div>
             {/if}
-          {/foreach}           
+
+            {* REF: OVI22020603-25729_24616<br>        
+            <hr> 
+            <h4>Proveedor por defecto</h4>  
+            {$info.direccion.firstname}           *}
+          </div>
+          {/foreach}
+
+          {* <pre>{$info|@var_export:true|nl2br}</pre> *}
+          <pre>{$info|@print_r}</pre>
+          {* {$info} *}
         </div>
       </div>
     </div>
   </div>
 </div>
-
-{* <pre>{$info|@var_export:true|nl2br}</pre> *}
-<pre>{$info|@print_r}</pre>
-{* {$info} *}
